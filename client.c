@@ -9,10 +9,10 @@
 
 int main(int argc, char** argv)
 {
-int socketFD, portNr, n;
-struct sockaddr_in serverAddress;
-struct hostent* server;
+int n;
+char *sHostName, *sPortNr;
 char buffer[256];
+struct addrinfo hints, *res, *p;
 
 if (argc < 3)
     {
@@ -21,38 +21,50 @@ if (argc < 3)
     }
 
 /* Get the port number */
-portNr = atoi(argv[2]);
+sHostName = argv[1];
+sPortNr = argv[2];
 
-/* Open the socket */
-socketFD = socket(AF_INET, SOCK_STREAM, 0);
-if(socketFD < 0)
-    {
-    fprintf(stderr, "Socket creation failed.\n");
-    exit(EXIT_FAILURE);
-    }
+memset(&hints, 0, sizeof(hints));
+hints.ai_family = AF_UNSPEC;
+hints.ai_socktype = SOCK_STREAM;
 
-/* Get the server */
-server = gethostbyname(argv[1]);
-if(server == NULL)
+/* Resolve host name */
+int status = getaddrinfo(sHostName, sPortNr, &hints, &res);
+if(status != 0)
     {
     fprintf(stderr, "Failed to find server.\n");
     exit(EXIT_FAILURE);
     }
 
-memset(&serverAddress, 0, sizeof(serverAddress));
-serverAddress.sin_family = AF_INET;
-memcpy(&serverAddress.sin_addr.s_addr, server->h_addr, server->h_length);
-serverAddress.sin_port = htons(portNr);
+int socky = 0;
+for (p = res; p != NULL; p = p->ai_next) {
+    socky = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+    if (socky == -1) 
+        {
+        continue;  /* Skip to the next address */
+        }
 
-if(connect(socketFD, (struct sockaddr *)&serverAddress, sizeof(serverAddress)) < 0)
+    if (connect(socky, p->ai_addr, p->ai_addrlen) == -1) 
+        {
+        fprintf(stderr, "Unable to connect socket. Retrying...\n");
+        close(socky);
+        socky = -1;
+        continue;  /* Skip to the next address */
+        }
+
+    fprintf(stdout, "Connection succeeded!\n");
+    break;  // Success: connected
+}
+if(socky == -1)
     {
-    fprintf(stderr, "Failed to connect to server.\n");
+    perror("Unable to find server.\n");
     exit(EXIT_FAILURE);
     }
 
+/* Connection succeeded, read message from stdin and transmit to server */
 printf("Message: ");
 fgets(buffer, sizeof(buffer) - 1, stdin);
-n = write(socketFD, buffer, strlen(buffer));
+n = write(socky, buffer, strlen(buffer));
 if(n < 0)
     {
     fprintf(stderr, "Failed to write to socket.\n");
@@ -60,7 +72,7 @@ if(n < 0)
     }
 
 memset(&buffer[0], 0, sizeof(buffer));
-n = read(socketFD, buffer, 255);
+n = read(socky, buffer, 255);
 if(n < 0)
     {
     fprintf(stderr, "Failed to read to socket.\n");

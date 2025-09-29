@@ -92,7 +92,5 @@ if(n < 0)
     exit(1);
     }
 
-printf("%d\n", portNr);
-
 return 0;
 }
