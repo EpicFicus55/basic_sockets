@@ -65,32 +65,34 @@ Second parameter - pointer of the client address, cast appropriately.
 Third parameter - pointer to an int containing the size of the client length.
 
 return - file descriptor of the new socket, to be used when communicating. */
-newSocketFD = accept(socketFD, (struct sockaddr *)&clientAddr, &clilen);
-if(newSocketFD < 0)
+while(1)
     {
-    fprintf(stderr, "Failed to accept incoming connection.\n");
-    exit(1);
+    newSocketFD = accept(socketFD, (struct sockaddr *)&clientAddr, &clilen);
+    if(newSocketFD < 0)
+        {
+        fprintf(stderr, "Failed to accept incoming connection.\n");
+        exit(1);
+        }
+
+    /* Receive data from the connection */
+    memset(&buffer[0], 0, sizeof(buffer));
+    n = read(newSocketFD, buffer, 255);
+    if(n < 0)
+        {
+        fprintf(stderr, "Failed to read from socket.\n");
+        exit(1);
+        }
+
+    /* Send received message to standard output */
+    fprintf(stdout, "Message: %s", buffer);
+
+    /* Send response to the client */
+    n = write(newSocketFD, "Message received.\n", 19);
+    if(n < 0)
+        {
+        fprintf(stderr, "Failed to write to socket.\n");
+        exit(1);
+        }
     }
-
-/* Receive data from the connection */
-memset(&buffer[0], 0, sizeof(buffer));
-n = read(newSocketFD, buffer, 255);
-if(n < 0)
-    {
-    fprintf(stderr, "Failed to read from socket.\n");
-    exit(1);
-    }
-
-/* Send received message to standard output */
-fprintf(stdout, "Message: %s\n", buffer);
-
-/* Send response to the client */
-n = write(newSocketFD, "Message received.\n", 19);
-if(n < 0)
-    {
-    fprintf(stderr, "Failed to write to socket.\n");
-    exit(1);
-    }
-
 return 0;
 }

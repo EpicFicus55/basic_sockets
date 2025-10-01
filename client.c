@@ -61,6 +61,8 @@ if(socky == -1)
     exit(EXIT_FAILURE);
     }
 
+freeaddrinfo(res);
+
 /* Connection succeeded, read message from stdin and transmit to server */
 printf("Message: ");
 fgets(buffer, sizeof(buffer) - 1, stdin);
