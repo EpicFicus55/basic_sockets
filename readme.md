@@ -9,8 +9,15 @@ Currently, the server has the following capabilities:
 - handles one or more connections
 - prints to stdin messages received from the clients
 
+It compiles with Make, so just running: `make server` should be enough.
+
+To run it, specify the port number, like this: `./server 5000`.
+
 # Client
 This is mostly just a basic program to test the connection to the server. It just sends a message and then dies.
+
+Compile it with Make, like this: `Make client`.
+To run it, specify the server address and the port, like this: `./client localhost 5000`.
 
 # Future improvements
 Since this is just a learning project, the possibilities are endless. Once I refine the code a little bit more, these are my objectives:
