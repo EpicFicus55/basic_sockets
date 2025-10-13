@@ -5,15 +5,24 @@
 #include <netinet/in.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 
 #define MAX_CONNECTIONS 10
 #define MESSAGE_RECEIVED_RESP "Message received"
+#define LOG_FILE_PATH "log.txt"
+
+#define LOG(...) do { \
+    fprintf(logFile, __VA_ARGS__); \
+    printf(__VA_ARGS__); \
+} while(0)
 
 int connections[ MAX_CONNECTIONS ];
+FILE* logFile;
 
 static int serverInit(int);
 static int serverLoop(int);
 static int serverClean(int);
+
 
 int main(int argc, char** argv)
 {
@@ -22,7 +31,7 @@ int main(int argc, char** argv)
 if(argc < 2)
     {
     fprintf(stderr, "Invalid number of arguments.\n");
-    exit(1);
+    exit(EXIT_FAILURE);
     }
 
 int serverSocket, portNr, result;
@@ -59,26 +68,37 @@ serverAddr.sin_addr.s_addr = INADDR_ANY; /* THe IP address of the host */
 serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 if(serverSocket < 0)
     {
-    fprintf(stderr, "Server socket creation failed.\n");
-    exit(1);
+    perror("Server socket creation failed.\n");
+    exit(EXIT_FAILURE);
     }
 
 /* Bind the socket */
 if(bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0)
     {
-    fprintf(stderr, "Unable to bind socket.\n");
-    exit(1);
+    perror("Unable to bind socket.\n");
+    exit(EXIT_FAILURE);
     }
 
 /* Set the socket to a passive state */
 if(listen(serverSocket, 5) < 0)
     {
-    fprintf(stderr, "Failed to listen on the socket.\n");
-    exit(1);
+    perror("Failed to listen on the socket.\n");
+    exit(EXIT_FAILURE);
     }
 
 /* Initialize the client connections array */
 memset(connections, 0, sizeof(connections));
+
+/* Open the log file */
+logFile = fopen("log.txt", "a+");
+if(logFile == NULL)
+    {
+    fprintf(stderr, "Unable to open log file.\n");
+    }
+else
+    {
+    LOG("Starting server.\n");
+    }
 
 return serverSocket;
 }
@@ -129,7 +149,7 @@ while(1)
         {
         clilen = sizeof(clientAddr);
         clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clilen);
-        printf("New connection received.\n");
+        LOG("New connection received.\n");
         
         /* Check the new socket */
         if(clientSocket < 0)
@@ -162,12 +182,12 @@ while(1)
                 {
                 close(connections[i]);
                 connections[i] = 0;
-                printf("Closing a connection.\n");
+                LOG("Closing a connection.\n");
                 }
             else
                 {
                 buffer[bytesRead] = '\0';
-                printf("Received message: %s\n", buffer);
+                LOG("Received message: %s\n", buffer);
 
                 strcpy(buffer, MESSAGE_RECEIVED_RESP);
                 bytesRead = write(connections[i], buffer, strlen(buffer));
@@ -175,7 +195,7 @@ while(1)
 
             }
         }
-    
+    fflush(logFile);
     }
 }
 
@@ -192,6 +212,11 @@ for(int i = 0; i < MAX_CONNECTIONS; i++)
     }
 
 close(serverSocket);
+
+LOG("Closing server.\n");
+
+/* Close log file */
+fclose(logFile);
 
 return 0;
 }
