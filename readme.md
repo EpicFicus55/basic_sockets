@@ -21,9 +21,6 @@ To run it, specify the server address and the port, like this: `./client localho
 
 # Future improvements
 Since this is just a learning project, the possibilities are endless. Once I refine the code a little bit more, these are my objectives:
-- make the server more useful, maybe make it a system monitoring server that I can query for system information on my local network.
-- Make it HTTP.
-- Add multithreading to it. I've been meaning to use C11 threads for some time.
-- Would be cool to make a server for a *very* basic game that would use a custom OpenGL rendering engine.
-- More items incoming
-- Maybe put it inside a Docker container?
+- turn the server into a file transfer server. It will be able to receive and transmit files between two computers.
+- add multithreading to it.
+- containerize the server.
