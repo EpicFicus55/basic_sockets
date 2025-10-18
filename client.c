@@ -133,7 +133,8 @@ return fileInfo;
 static int sendFileToServer(int serverSocket, struct FileInfoType* fileInfo)
 {
 int n;
-char buffer[256];
+char buffer[1024];
+FILE* file;
 
 /* Send file information to the server and wait for response */
 n = write(serverSocket, (void*)fileInfo, sizeof(*fileInfo));
@@ -152,7 +153,26 @@ if(n < 0)
     }
 printf("%s\n", buffer);
 
-/* Send the file in chunks: TODO */
+/* Send the file in chunks: */
+file = fopen(fileInfo->fileName, "r");
 
+while(!feof(file))
+    {
+    memset(buffer, 0, sizeof(buffer));
+
+    fread(buffer, sizeof(buffer)-1, 1, file);
+
+    n = write(serverSocket, (void*)buffer, strlen(buffer));
+    printf("Sending chunk of file.\n");
+    
+    if(n < 0)
+        {
+        perror("Failed to write file data to socket.\n");
+        fclose(file);
+        exit(EXIT_FAILURE);
+        }
+    }
+
+fclose(file);
 return 0;
 }

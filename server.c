@@ -10,12 +10,20 @@
 #define MAX_CONNECTIONS 10
 #define MESSAGE_RECEIVED_RESP "Message received"
 #define LOG_FILE_PATH "log.txt"
+#define REMOTE_FILE_DIR "./remote"
 
 #define LOG(...) do { \
     fprintf(logFile, __VA_ARGS__); \
     printf(__VA_ARGS__); \
 } while(0)
 
+typedef enum
+    {
+    STATUS_AVAILABLE,
+    STATUS_CLIENT_CONNECTED,
+    STATUS_CLIENT_TRANSFER_IN_PROGRESS,
+    STATUS_CLIENT_TRANSFER_FAILED
+    } ConnectionStatusType;
 
 struct FileInfoType
     {
@@ -23,7 +31,15 @@ struct FileInfoType
     unsigned int sizeInBytes;
     };
 
-int connections[ MAX_CONNECTIONS ];
+typedef struct 
+    {
+    int socketFD;
+    ConnectionStatusType status;
+    struct FileInfoType fileInfo;
+    FILE* file;
+    } ConnectionType;
+
+ConnectionType connections[ MAX_CONNECTIONS ];
 FILE* logFile;
 
 static int serverInit(int);
@@ -135,12 +151,13 @@ while(1)
     /* Initialize the fd_set with all the currently open connections */
     for(int i = 0; i < MAX_CONNECTIONS; i++)
         {
-        if(connections[i] > 0)
+        if((connections[i].status == STATUS_CLIENT_TRANSFER_IN_PROGRESS || connections[i].status == STATUS_CLIENT_CONNECTED)
+            && connections[i].socketFD != 0)
             {
-            FD_SET(connections[i], &readfds);
-            if(connections[i] > maxFD)
+            FD_SET(connections[i].socketFD, &readfds);
+            if(connections[i].socketFD > maxFD)
                 {
-                maxFD = connections[i];
+                maxFD = connections[i].socketFD;
                 }
             }
         }
@@ -168,9 +185,10 @@ while(1)
         /* Register the newly connected client to the list of file descriptors to be read */
         for(int i = 0; i < MAX_CONNECTIONS; i++)
             {
-            if(connections[i] == 0)
+            if(connections[i].status == STATUS_AVAILABLE)
                 {
-                connections[i] = clientSocket;
+                connections[i].socketFD = clientSocket;
+                connections[i].status = STATUS_CLIENT_CONNECTED;
                 break;
                 }
             }
@@ -179,37 +197,57 @@ while(1)
     /* Handle client requests */
     for(int i = 0; i < MAX_CONNECTIONS; i++)
         {
-        if(connections[i] > 0 && FD_ISSET(connections[i], &readfds))
+        if(connections[i].socketFD > 0 && FD_ISSET(connections[i].socketFD, &readfds))
             {
             char buffer[1024];
             ssize_t bytesRead;
 
-            bytesRead = read(connections[i], buffer, sizeof(buffer));
+            bytesRead = read(connections[i].socketFD, buffer, sizeof(buffer));
             if(bytesRead <= 0)
                 {
-                close(connections[i]);
-                connections[i] = 0;
+                if(connections[i].status == STATUS_CLIENT_TRANSFER_IN_PROGRESS)
+                    {
+                    printf("Unable to transfer file. Try again.\n");
+                    }
+                close(connections[i].socketFD);
+                connections[i].socketFD = 0;
+                connections[i].status = STATUS_AVAILABLE;
                 LOG("Closing a connection.\n");
                 }
             else
                 {
-                struct FileInfoType fileInfo;
-
-                memset(&fileInfo, 0, sizeof(fileInfo));
-
-                if(bytesRead != sizeof(fileInfo))
+                /* The client is initiating a transfer */
+                if(connections[i].status == STATUS_CLIENT_CONNECTED)
                     {
-                    printf("Could not read all the bytes: %ld / %ld.\n", bytesRead, sizeof(fileInfo));
+                    if(bytesRead != sizeof(struct FileInfoType))
+                        {
+                        printf("Could not read all the bytes: %ld / %ld.\n", bytesRead, sizeof(struct FileInfoType));
+                        }
+                    sprintf(connections[i].fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, ((struct FileInfoType*)buffer)->fileName);
+                    connections[i].fileInfo.sizeInBytes = ((struct FileInfoType*)buffer)->sizeInBytes;
+
+                    LOG("Received message:\n\tFile name:%s\n\tFile size: %d\n", connections[i].fileInfo.fileName, connections[i].fileInfo.sizeInBytes);
+                    
+                    strcpy(buffer, MESSAGE_RECEIVED_RESP);
+                    bytesRead = write(connections[i].socketFD, buffer, strlen(buffer));
+                    
+                    connections[i].file = fopen(connections[i].fileInfo.fileName, "w+");
+                    connections[i].status = STATUS_CLIENT_TRANSFER_IN_PROGRESS;
                     }
+                /* The client has a transfer in progress */
+                else
+                    {
+                    /* If we received less than the chunk size, we close the file */
+                    if(bytesRead < 1024)
+                        {
+                        LOG("Received chunk of file.\n");
 
-                memcpy(&fileInfo, buffer, sizeof(fileInfo));
+                        fprintf(connections[i].file, "%s", buffer);
+                        fclose(connections[i].file);
+                        memset(&connections[i], 0, sizeof(connections[i]));
+                        }
+                    }
                 
-                
-                buffer[bytesRead] = '\0';
-                LOG("Received message:\n\tFile name:%s\n\tFile size: %d\n", fileInfo.fileName, fileInfo.sizeInBytes);
-
-                strcpy(buffer, MESSAGE_RECEIVED_RESP);
-                bytesRead = write(connections[i], buffer, strlen(buffer));
                 }
 
             }
@@ -223,10 +261,11 @@ static int serverClean(int serverSocket)
 
 for(int i = 0; i < MAX_CONNECTIONS; i++)
     {
-    if(connections[i] != 0)
+    if(connections[i].socketFD != 0)
         {
-        close(connections[i]);
-        connections[i] = 0;
+        close(connections[i].socketFD);
+        connections[i].status = STATUS_AVAILABLE;
+        connections[i].socketFD = 0;
         }
     }
 

@@ -10,6 +10,8 @@ client: client.c
 
 server: server.c
 	${CC} ${CFLAGS} server.c -o server
+	
+	mkdir -p remote
 
 clean:
 	rm client server
