@@ -16,6 +16,13 @@
     printf(__VA_ARGS__); \
 } while(0)
 
+
+struct FileInfoType
+    {
+    char fileName[128];
+    unsigned int sizeInBytes;
+    };
+
 int connections[ MAX_CONNECTIONS ];
 FILE* logFile;
 
@@ -186,8 +193,20 @@ while(1)
                 }
             else
                 {
+                struct FileInfoType fileInfo;
+
+                memset(&fileInfo, 0, sizeof(fileInfo));
+
+                if(bytesRead != sizeof(fileInfo))
+                    {
+                    printf("Could not read all the bytes: %ld / %ld.\n", bytesRead, sizeof(fileInfo));
+                    }
+
+                memcpy(&fileInfo, buffer, sizeof(fileInfo));
+                
+                
                 buffer[bytesRead] = '\0';
-                LOG("Received message: %s\n", buffer);
+                LOG("Received message:\n\tFile name:%s\n\tFile size: %d\n", fileInfo.fileName, fileInfo.sizeInBytes);
 
                 strcpy(buffer, MESSAGE_RECEIVED_RESP);
                 bytesRead = write(connections[i], buffer, strlen(buffer));

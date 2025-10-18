@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -7,12 +8,24 @@
 #include <unistd.h>
 #include <string.h>
 
+struct FileInfoType
+    {
+    char fileName[128];
+    unsigned int sizeInBytes;
+    };
+
+int serverSocket;
+
+static int connectToServer(char*, char*);
+static struct FileInfoType getFileInfo(char*);
+static int sendFileToServer(int, struct FileInfoType*);
+
 int main(int argc, char** argv)
 {
-int n;
 char *sHostName, *sPortNr;
-char buffer[256];
-struct addrinfo hints, *res, *p;
+char fileName[128];
+struct FileInfoType fileInfo;
+// bool isFileTransmitted = false;
 
 if (argc < 3)
     {
@@ -24,38 +37,62 @@ if (argc < 3)
 sHostName = argv[1];
 sPortNr = argv[2];
 
+serverSocket = connectToServer(sHostName, sPortNr);
+
+/* Connection succeeded, read message from stdin and transmit to server */
+printf("File to send: ");
+
+memset(&fileName, 0, sizeof(fileName));
+fgets(fileName, sizeof(fileName) - 1, stdin);
+fileName[strcspn(fileName, "\n")] = '\0'; /* fgets return value also contains the \n... */
+
+/* Get the file information */
+fileInfo = getFileInfo(fileName);
+
+/* Send the filename to the server */
+printf("Sending message:\n\tFile name:%s\n\tFile size: %d\n", fileInfo.fileName, fileInfo.sizeInBytes);
+sendFileToServer(serverSocket, &fileInfo);
+
+return EXIT_SUCCESS;
+}
+
+static int connectToServer(char* hostName, char* port)
+{
+struct addrinfo hints, *res, *p;
+int _socket = -1;
+
 memset(&hints, 0, sizeof(hints));
 hints.ai_family = AF_UNSPEC;
 hints.ai_socktype = SOCK_STREAM;
 
 /* Resolve host name */
-int status = getaddrinfo(sHostName, sPortNr, &hints, &res);
+int status = getaddrinfo(hostName, port, &hints, &res);
 if(status != 0)
     {
     fprintf(stderr, "Failed to find server.\n");
     exit(EXIT_FAILURE);
     }
 
-int socky = 0;
+
 for (p = res; p != NULL; p = p->ai_next) {
-    socky = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
-    if (socky == -1) 
+    _socket = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+    if (_socket == -1) 
         {
         continue;  /* Skip to the next address */
         }
 
-    if (connect(socky, p->ai_addr, p->ai_addrlen) == -1) 
+    if (connect(_socket, p->ai_addr, p->ai_addrlen) == -1) 
         {
         fprintf(stderr, "Unable to connect socket. Retrying...\n");
-        close(socky);
-        socky = -1;
+        close(_socket);
+        _socket = -1;
         continue;  /* Skip to the next address */
         }
 
     fprintf(stdout, "Connection succeeded!\n");
     break;  // Success: connected
 }
-if(socky == -1)
+if(_socket == -1)
     {
     perror("Unable to find server.\n");
     exit(EXIT_FAILURE);
@@ -63,24 +100,59 @@ if(socky == -1)
 
 freeaddrinfo(res);
 
-/* Connection succeeded, read message from stdin and transmit to server */
-printf("Message: ");
-fgets(buffer, sizeof(buffer) - 1, stdin);
-n = write(socky, buffer, strlen(buffer));
+return _socket;
+}
+
+
+static struct FileInfoType getFileInfo(char* fileName)
+{
+struct FileInfoType fileInfo;
+FILE* file;
+
+memset(&fileInfo, 0, sizeof(fileInfo));
+
+
+file = fopen(fileName, "r+");
+if(!file)
+{
+    fprintf(stderr, "Unable to open %s %ld\n.", fileName, strlen(fileName));
+    return fileInfo;
+}
+
+strcpy(fileInfo.fileName, fileName);
+
+fseek(file, 0, SEEK_END);
+fileInfo.sizeInBytes = ftell(file);
+
+fclose(file);
+
+return fileInfo;
+}
+
+
+static int sendFileToServer(int serverSocket, struct FileInfoType* fileInfo)
+{
+int n;
+char buffer[256];
+
+/* Send file information to the server and wait for response */
+n = write(serverSocket, (void*)fileInfo, sizeof(*fileInfo));
 if(n < 0)
     {
-    fprintf(stderr, "Failed to write to socket.\n");
+    perror("Failed to write fileinfo to socket.\n");
     exit(EXIT_FAILURE);
     }
 
 memset(&buffer[0], 0, sizeof(buffer));
-n = read(socky, buffer, 255);
+n = read(serverSocket, buffer, 255);
 if(n < 0)
     {
-    fprintf(stderr, "Failed to read to socket.\n");
+    perror("Failed to read server response from socket.\n");
     exit(EXIT_FAILURE);
     }
 printf("%s\n", buffer);
 
-return EXIT_SUCCESS;
+/* Send the file in chunks: TODO */
+
+return 0;
 }
