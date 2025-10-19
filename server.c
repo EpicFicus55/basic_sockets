@@ -11,6 +11,7 @@
 #define MESSAGE_RECEIVED_RESP "Message received"
 #define LOG_FILE_PATH "log.txt"
 #define REMOTE_FILE_DIR "./remote"
+#define CHUNK_SIZE 1024 /* 1KB per chunk */
 
 #define LOG(...) do { \
     fprintf(logFile, __VA_ARGS__); \
@@ -37,6 +38,7 @@ typedef struct
     ConnectionStatusType status;
     struct FileInfoType fileInfo;
     FILE* file;
+    int receivedBytes;
     } ConnectionType;
 
 ConnectionType connections[ MAX_CONNECTIONS ];
@@ -45,6 +47,8 @@ FILE* logFile;
 static int serverInit(int);
 static int serverLoop(int);
 static int serverClean(int);
+static int connectionInit(int, struct FileInfoType);
+static int connectionProcess(int, int, char*);
 
 
 int main(int argc, char** argv)
@@ -199,9 +203,10 @@ while(1)
         {
         if(connections[i].socketFD > 0 && FD_ISSET(connections[i].socketFD, &readfds))
             {
-            char buffer[1024];
-            ssize_t bytesRead;
+            char buffer[CHUNK_SIZE];
+            int bytesRead;
 
+            memset(buffer, 0, sizeof(buffer));
             bytesRead = read(connections[i].socketFD, buffer, sizeof(buffer));
             if(bytesRead <= 0)
                 {
@@ -221,31 +226,21 @@ while(1)
                     {
                     if(bytesRead != sizeof(struct FileInfoType))
                         {
-                        printf("Could not read all the bytes: %ld / %ld.\n", bytesRead, sizeof(struct FileInfoType));
+                        printf("Could not read all the bytes: %d / %ld.\n", bytesRead, sizeof(struct FileInfoType));
                         }
-                    sprintf(connections[i].fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, ((struct FileInfoType*)buffer)->fileName);
-                    connections[i].fileInfo.sizeInBytes = ((struct FileInfoType*)buffer)->sizeInBytes;
-
-                    LOG("Received message:\n\tFile name:%s\n\tFile size: %d\n", connections[i].fileInfo.fileName, connections[i].fileInfo.sizeInBytes);
-                    
-                    strcpy(buffer, MESSAGE_RECEIVED_RESP);
-                    bytesRead = write(connections[i].socketFD, buffer, strlen(buffer));
-                    
-                    connections[i].file = fopen(connections[i].fileInfo.fileName, "w+");
-                    connections[i].status = STATUS_CLIENT_TRANSFER_IN_PROGRESS;
+                    /* Initialize the connection */    
+                    struct FileInfoType fileInfo;
+                    memcpy(&fileInfo, buffer, bytesRead);
+                    if(connectionInit(i, fileInfo) == -1)
+                        {
+                        continue;
+                        }
                     }
                 /* The client has a transfer in progress */
                 else
                     {
-                    /* If we received less than the chunk size, we close the file */
-                    if(bytesRead < 1024)
-                        {
-                        LOG("Received chunk of file.\n");
-
-                        fprintf(connections[i].file, "%s", buffer);
-                        fclose(connections[i].file);
-                        memset(&connections[i], 0, sizeof(connections[i]));
-                        }
+                    LOG("Processing %d bytes.", bytesRead);
+                    connectionProcess(i, bytesRead, buffer);
                     }
                 
                 }
@@ -275,6 +270,69 @@ LOG("Closing server.\n");
 
 /* Close log file */
 fclose(logFile);
+
+return 0;
+}
+
+
+static int connectionInit(int connectionIdx, struct FileInfoType fileInfo)
+{
+char confirmationMessage[128];
+int bytesWritten;
+
+sprintf(connections[connectionIdx].fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, fileInfo.fileName);
+connections[connectionIdx].fileInfo.sizeInBytes = fileInfo.sizeInBytes;
+
+LOG("Received message:\n\tFile name:%s\n\tFile size: %d\n", connections[connectionIdx].fileInfo.fileName, connections[connectionIdx].fileInfo.sizeInBytes);
+
+/* Send confirmation message to client */
+memset(confirmationMessage, 0, sizeof(confirmationMessage));
+strcpy(confirmationMessage, MESSAGE_RECEIVED_RESP);
+bytesWritten = write(connections[connectionIdx].socketFD, confirmationMessage, strlen(confirmationMessage));
+if(bytesWritten <= 0)
+    {
+    LOG("Unable to send confirmation message to client: %d.\n", connectionIdx);
+    connections[connectionIdx].status = STATUS_CLIENT_TRANSFER_FAILED;
+    return -1;
+    }
+
+/* The connection was initiated, waiting for file contents */
+connections[connectionIdx].file = fopen(connections[connectionIdx].fileInfo.fileName, "w+");
+connections[connectionIdx].status = STATUS_CLIENT_TRANSFER_IN_PROGRESS;
+
+return 0;
+}
+
+static int connectionProcess(int connectionIdx, int bytesRead, char* buffer)
+{
+int bytesWritten;
+char confirmationMessage[128];
+
+LOG("Received chunk of file.\n");
+
+/* Append the incoming bytes to the file */
+fwrite(buffer, bytesRead, 1, connections[connectionIdx].file);
+
+// fflush(connections[connectionIdx].file);
+connections[connectionIdx].receivedBytes += bytesRead;
+
+/* Send confirmation to client */
+strcpy(confirmationMessage, MESSAGE_RECEIVED_RESP);
+bytesWritten = write(connections[connectionIdx].socketFD, confirmationMessage, strlen(confirmationMessage));
+if(bytesWritten <= 0)
+    {
+    LOG("Unable to send confirmation message to client: %d.\n", connectionIdx);
+    connections[connectionIdx].status = STATUS_CLIENT_TRANSFER_FAILED;
+    return -1;
+    }
+
+if(connections[connectionIdx].receivedBytes >= connections[connectionIdx].fileInfo.sizeInBytes)
+    {
+    /* Close the file and the connection - transfer is finished */
+    LOG("Finished transferring file: %s from connection:%d\n", connections[connectionIdx].fileInfo.fileName, connectionIdx);
+    fclose(connections[connectionIdx].file);
+    memset(&connections[connectionIdx], 0, sizeof(connections[connectionIdx]));
+    }
 
 return 0;
 }

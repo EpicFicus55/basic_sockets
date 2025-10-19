@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <string.h>
 
+#define MESSAGE_RECEIVED_RESP "Message received"
+
 struct FileInfoType
     {
     char fileName[128];
@@ -156,20 +158,40 @@ printf("%s\n", buffer);
 /* Send the file in chunks: */
 file = fopen(fileInfo->fileName, "r");
 
-while(!feof(file))
+int transferInProgress = true;
+while(transferInProgress)
     {
+    char serverResponse[128];
+    size_t bytesRead;
+    
     memset(buffer, 0, sizeof(buffer));
+    memset(serverResponse, 0, sizeof(serverResponse));
 
-    fread(buffer, sizeof(buffer)-1, 1, file);
+    bytesRead = fread(buffer, sizeof(buffer)-1, 1, file);
+    if(bytesRead == 0)
+        {
+        transferInProgress = false;
+        }
 
     n = write(serverSocket, (void*)buffer, strlen(buffer));
-    printf("Sending chunk of file.\n");
-    
+    printf("Sending chunk of file: %d bytes received.\n", n);
     if(n < 0)
         {
         perror("Failed to write file data to socket.\n");
         fclose(file);
         exit(EXIT_FAILURE);
+        }
+    
+    n = read(serverSocket, serverResponse, sizeof(serverResponse) - 1);
+    if(n < 0)
+        {
+        perror("Failed to rget confirmation from server.\n");
+        fclose(file);
+        exit(EXIT_FAILURE);
+        }
+    else
+        {
+        printf("%s\n", serverResponse);
         }
     }
 
