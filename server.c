@@ -47,7 +47,7 @@ FILE* logFile;
 static int serverInit(int);
 static int serverLoop(int);
 static int serverClean(int);
-static int connectionInit(int, struct FileInfoType);
+static int connectionInit(int, int, char*);
 static int connectionProcess(int, int, char*);
 
 
@@ -206,6 +206,7 @@ while(1)
             char buffer[CHUNK_SIZE];
             int bytesRead;
 
+            /* Get the data from the client*/
             memset(buffer, 0, sizeof(buffer));
             bytesRead = read(connections[i].socketFD, buffer, sizeof(buffer));
             if(bytesRead <= 0)
@@ -221,30 +222,29 @@ while(1)
                 }
             else
                 {
-                /* The client is initiating a transfer */
-                if(connections[i].status == STATUS_CLIENT_CONNECTED)
+                /* Handle the data from the client */
+                switch(connections[i].status)
                     {
-                    if(bytesRead != sizeof(struct FileInfoType))
-                        {
-                        printf("Could not read all the bytes: %d / %ld.\n", bytesRead, sizeof(struct FileInfoType));
-                        }
-                    /* Initialize the connection */    
-                    struct FileInfoType fileInfo;
-                    memcpy(&fileInfo, buffer, bytesRead);
-                    if(connectionInit(i, fileInfo) == -1)
-                        {
-                        continue;
-                        }
+                    /* The client is initiating a transfer */
+                    case STATUS_CLIENT_CONNECTED:
+                        /* Initialize the connection */
+                        if(connectionInit(i, bytesRead, buffer) == -1)
+                            {
+                            continue;
+                            }
+                        break;
+                    /* The client has a transfer in progress */
+                    case STATUS_CLIENT_TRANSFER_IN_PROGRESS:
+                        if(connectionProcess(i, bytesRead, buffer) == -1)
+                            {
+                            continue;
+                            }
+                        break;
+                    default:
+                        LOG("Invalid connection.\n");
+                        break;
                     }
-                /* The client has a transfer in progress */
-                else
-                    {
-                    LOG("Processing %d bytes.", bytesRead);
-                    connectionProcess(i, bytesRead, buffer);
-                    }
-                
                 }
-
             }
         }
     fflush(logFile);
@@ -275,15 +275,20 @@ return 0;
 }
 
 
-static int connectionInit(int connectionIdx, struct FileInfoType fileInfo)
+static int connectionInit(int connectionIdx, int bytesRead, char* buffer)
 {
 char confirmationMessage[128];
 int bytesWritten;
 
-sprintf(connections[connectionIdx].fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, fileInfo.fileName);
-connections[connectionIdx].fileInfo.sizeInBytes = fileInfo.sizeInBytes;
+if(bytesRead != sizeof(struct FileInfoType))
+    {
+    printf("File information incomplete. Actual bytes %d / expected bytes %ld.\n", bytesRead, sizeof(struct FileInfoType));
+    return -1;
+    }
+sprintf(connections[connectionIdx].fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, ((struct FileInfoType*)buffer)->fileName);
+connections[connectionIdx].fileInfo.sizeInBytes = ((struct FileInfoType*)buffer)->sizeInBytes;
 
-LOG("Received message:\n\tFile name:%s\n\tFile size: %d\n", connections[connectionIdx].fileInfo.fileName, connections[connectionIdx].fileInfo.sizeInBytes);
+LOG("Initializing file transfer:\n\tFile name:%s\n\tFile size: %d\n\tExpected chunks:%d\n", connections[connectionIdx].fileInfo.fileName, connections[connectionIdx].fileInfo.sizeInBytes, connections[connectionIdx].fileInfo.sizeInBytes / CHUNK_SIZE);
 
 /* Send confirmation message to client */
 memset(confirmationMessage, 0, sizeof(confirmationMessage));
@@ -308,12 +313,11 @@ static int connectionProcess(int connectionIdx, int bytesRead, char* buffer)
 int bytesWritten;
 char confirmationMessage[128];
 
-LOG("Received chunk of file.\n");
+LOG("Received chunk of file. Processing %d bytes.\n", bytesRead);
 
 /* Append the incoming bytes to the file */
 fwrite(buffer, bytesRead, 1, connections[connectionIdx].file);
 
-// fflush(connections[connectionIdx].file);
 connections[connectionIdx].receivedBytes += bytesRead;
 
 /* Send confirmation to client */
