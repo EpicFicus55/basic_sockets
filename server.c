@@ -7,11 +7,7 @@
 #include <sys/select.h>
 #include <sys/types.h>
 
-#define MAX_CONNECTIONS 10
-#define MESSAGE_RECEIVED_RESP "Message received"
-#define LOG_FILE_PATH "log.txt"
-#define REMOTE_FILE_DIR "./remote"
-#define CHUNK_SIZE 1024 /* 1KB per chunk */
+#include "common.h"
 
 #define LOG(...) do { \
     fprintf(logFile, __VA_ARGS__); \
@@ -25,12 +21,6 @@ typedef enum
     STATUS_CLIENT_TRANSFER_IN_PROGRESS,
     STATUS_CLIENT_TRANSFER_FAILED
     } ConnectionStatusType;
-
-struct FileInfoType
-    {
-    char fileName[128];
-    unsigned int sizeInBytes;
-    };
 
 typedef struct 
     {

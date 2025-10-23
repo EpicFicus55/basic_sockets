@@ -8,13 +8,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#define MESSAGE_RECEIVED_RESP "Message received"
-
-struct FileInfoType
-    {
-    char fileName[128];
-    unsigned int sizeInBytes;
-    };
+#include "common.h"
 
 int serverSocket;
 
