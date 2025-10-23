@@ -7,7 +7,7 @@ DEFINES = -D_POSIX_C_SOURCE=200112L
 all: client server
 
 client: client.c
-	${CC} ${CFLAGS} ${DEFINES}client.c -o client
+	${CC} ${CFLAGS} ${DEFINES} client.c -o client
 
 server: server.c
 	${CC} ${CFLAGS} ${DEFINES} server.c -o server
