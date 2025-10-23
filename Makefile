@@ -1,15 +1,16 @@
 CC = gcc
-CFLAGS = -Wall -O2
+CFLAGS = -std=c99 -Wall -Wpedantic -O2
+DEFINES = -D_POSIX_C_SOURCE=200112L
 
 .PHONY: all clean
 
 all: client server
 
 client: client.c
-	${CC} ${CFLAGS} client.c -o client
+	${CC} ${CFLAGS} ${DEFINES}client.c -o client
 
 server: server.c
-	${CC} ${CFLAGS} server.c -o server
+	${CC} ${CFLAGS} ${DEFINES} server.c -o server
 	
 	mkdir -p remote
 

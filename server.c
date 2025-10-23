@@ -4,8 +4,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <string.h>
-#include <time.h>
-#include <errno.h>
+#include <sys/select.h>
+#include <sys/types.h>
 
 #define MAX_CONNECTIONS 10
 #define MESSAGE_RECEIVED_RESP "Message received"
