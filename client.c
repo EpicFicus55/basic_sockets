@@ -133,6 +133,7 @@ char buffer[1024];
 FILE* file;
 
 /* Send file information to the server and wait for response */
+printf("sizeof fileinfo = %ld\n", sizeof(*fileInfo));
 n = write(serverSocket, (void*)fileInfo, sizeof(*fileInfo));
 if(n < 0)
     {

@@ -19,26 +19,71 @@ typedef enum
     STATUS_AVAILABLE,
     STATUS_CLIENT_CONNECTED,
     STATUS_CLIENT_TRANSFER_IN_PROGRESS,
+    STATUS_CLIENT_TRANSFER_COMPLETED,
     STATUS_CLIENT_TRANSFER_FAILED
     } ConnectionStatusType;
 
-typedef struct 
+typedef struct connectionNode
     {
     int socketFD;
     ConnectionStatusType status;
     struct FileInfoType fileInfo;
     FILE* file;
     int receivedBytes;
-    } ConnectionType;
+    struct connectionNode* next; 
+    } ConnectionNodeType;
 
-ConnectionType connections[ MAX_CONNECTIONS ];
+typedef struct 
+    {
+    ConnectionNodeType* head;
+    } ConnectionList;
+
+ConnectionList connectionList;
 FILE* logFile;
+
+/* Linked list functionalities */
+static inline ConnectionNodeType* allocateConnection(void) 
+    {
+    printf("Allocating connection.\n");
+    ConnectionNodeType* connection = malloc(sizeof(ConnectionNodeType));
+    return connection;
+    }
+
+static inline void deallocateConnection(ConnectionNodeType* connection)
+    {
+    printf("Freeing connection.\n");
+    free(connection);
+    }
+
+static inline void addConnectionToList(ConnectionList* list, ConnectionNodeType* connection) 
+    {
+    if(!list) return;
+    connection->next = list->head;
+    list->head = connection;
+    }
+static inline void removeConnectionFromList(ConnectionList* list, ConnectionNodeType* connection)
+    {
+    if(!list) return;
+    ConnectionNodeType** iterator = &list->head;
+    while(*iterator)
+        {
+        if(*iterator == connection)
+            {
+            *iterator = (*iterator)->next;
+            }
+        else
+            {
+            iterator = &((*iterator)->next);
+            }
+        }
+    }
 
 static int serverInit(int);
 static int serverLoop(int);
 static int serverClean(int);
-static int connectionInit(int, int, char*);
-static int connectionProcess(int, int, char*);
+static int connectionInit(ConnectionNodeType*, int, char*);
+static int connectionProcess(ConnectionNodeType*, int, char*);
+static int connectionStop(ConnectionNodeType*);
 
 
 int main(int argc, char** argv)
@@ -58,13 +103,12 @@ portNr = atoi(argv[1]);
 
 serverSocket = serverInit(portNr);
 result = serverLoop(serverSocket);
+serverClean(serverSocket);
 if(result != 0)
     {
-    serverClean(serverSocket);
     exit(EXIT_FAILURE);
     }
-
-serverClean(serverSocket);
+    
 exit(EXIT_SUCCESS);
 
 }
@@ -103,9 +147,6 @@ if(listen(serverSocket, 5) < 0)
     exit(EXIT_FAILURE);
     }
 
-/* Initialize the client connections array */
-memset(connections, 0, sizeof(connections));
-
 /* Open the log file */
 logFile = fopen("log.txt", "a+");
 if(logFile == NULL)
@@ -132,6 +173,8 @@ int clientSocket;
 /* Clear the client information and wait for a connection */
 memset(&clientAddr, 0, sizeof(clientAddr));
 
+printf("Entering loop.\n");
+
 while(1)
     {
     int maxFD = serverSocket;
@@ -143,15 +186,15 @@ while(1)
     tval.tv_usec = 0;
 
     /* Initialize the fd_set with all the currently open connections */
-    for(int i = 0; i < MAX_CONNECTIONS; i++)
+    for(ConnectionNodeType* connection = connectionList.head; connection; connection = connection->next)
         {
-        if((connections[i].status == STATUS_CLIENT_TRANSFER_IN_PROGRESS || connections[i].status == STATUS_CLIENT_CONNECTED)
-            && connections[i].socketFD != 0)
+        if((connection->status == STATUS_CLIENT_TRANSFER_IN_PROGRESS || connection->status == STATUS_CLIENT_CONNECTED)
+            && connection->socketFD != 0)
             {
-            FD_SET(connections[i].socketFD, &readfds);
-            if(connections[i].socketFD > maxFD)
+            FD_SET(connection->socketFD, &readfds);
+            if(connection->socketFD > maxFD)
                 {
-                maxFD = connections[i].socketFD;
+                maxFD = connection->socketFD;
                 }
             }
         }
@@ -177,64 +220,80 @@ while(1)
             }
 
         /* Register the newly connected client to the list of file descriptors to be read */
-        for(int i = 0; i < MAX_CONNECTIONS; i++)
-            {
-            if(connections[i].status == STATUS_AVAILABLE)
-                {
-                connections[i].socketFD = clientSocket;
-                connections[i].status = STATUS_CLIENT_CONNECTED;
-                break;
-                }
-            }
+        ConnectionNodeType* incomingConnection = allocateConnection();
+        incomingConnection->status = STATUS_CLIENT_CONNECTED;
+        incomingConnection->socketFD = clientSocket;
+        addConnectionToList(&connectionList, incomingConnection);
         }
 
     /* Handle client requests */
-    for(int i = 0; i < MAX_CONNECTIONS; i++)
+    ConnectionNodeType* connection = connectionList.head;
+    ConnectionNodeType* next = connection ? connection->next : NULL;
+    while(connection)
         {
-        if(connections[i].socketFD > 0 && FD_ISSET(connections[i].socketFD, &readfds))
+        if(connection->socketFD > 0 && FD_ISSET(connection->socketFD, &readfds))
             {
             char buffer[CHUNK_SIZE];
             int bytesRead;
 
             /* Get the data from the client*/
             memset(buffer, 0, sizeof(buffer));
-            bytesRead = read(connections[i].socketFD, buffer, sizeof(buffer));
+            bytesRead = read(connection->socketFD, buffer, sizeof(buffer));
             if(bytesRead <= 0)
                 {
-                if(connections[i].status == STATUS_CLIENT_TRANSFER_IN_PROGRESS)
+                if(connection->status == STATUS_CLIENT_TRANSFER_IN_PROGRESS)
                     {
-                    printf("Unable to transfer file. Try again.\n");
+                    LOG("Unable to transfer file. Try again.\n");
                     }
-                close(connections[i].socketFD);
-                connections[i].socketFD = 0;
-                connections[i].status = STATUS_AVAILABLE;
+                close(connection->socketFD);
+                connection->socketFD = 0;
+                connection->status = STATUS_AVAILABLE;
                 LOG("Closing a connection.\n");
                 }
             else
                 {
                 /* Handle the data from the client */
-                switch(connections[i].status)
+                switch(connection->status)
                     {
                     /* The client is initiating a transfer */
                     case STATUS_CLIENT_CONNECTED:
                         /* Initialize the connection */
-                        if(connectionInit(i, bytesRead, buffer) == -1)
+                        if(connectionInit(connection, bytesRead, buffer) == -1)
                             {
-                            continue;
+                            LOG("Client init error.\n");
                             }
+                        connection = next;
+                        next = next ? next->next : next;
                         break;
                     /* The client has a transfer in progress */
                     case STATUS_CLIENT_TRANSFER_IN_PROGRESS:
-                        if(connectionProcess(i, bytesRead, buffer) == -1)
+                        if(connectionProcess(connection, bytesRead, buffer) == -1)
                             {
-                            continue;
+                            LOG("Client transfer error.\n");
+                            }
+                        connection = next;
+                        next = next ? next->next : next;
+                        break;
+                    /* The transfer from the client has been completed */
+                    case STATUS_CLIENT_TRANSFER_COMPLETED:
+                        if(connectionStop(connection) == -1)
+                            {
+                            connection = next;
+                            next = next ? next->next : next;
                             }
                         break;
                     default:
                         LOG("Invalid connection.\n");
+                            connection = next;
+                            next = next ? next->next : next;
                         break;
                     }
                 }
+            }
+        else 
+            {
+            connection = next;
+            next = next ? next->next : next;
             }
         }
     fflush(logFile);
@@ -242,91 +301,96 @@ while(1)
 }
 
 static int serverClean(int serverSocket)
-{
-
-for(int i = 0; i < MAX_CONNECTIONS; i++)
     {
-    if(connections[i].socketFD != 0)
+    ConnectionNodeType* connection = connectionList.head;
+    while(connection)
         {
-        close(connections[i].socketFD);
-        connections[i].status = STATUS_AVAILABLE;
-        connections[i].socketFD = 0;
+        ConnectionNodeType* next = connection->next;
+        deallocateConnection(connection);
+        connection = next;
         }
+
+    close(serverSocket);
+
+    LOG("Closing server.\n");
+
+    /* Close log file */
+    fclose(logFile);
+
+    return 0;
     }
 
-close(serverSocket);
 
-LOG("Closing server.\n");
+static int connectionInit(ConnectionNodeType* connection, int bytesRead, char* buffer)
+    {
+    int bytesWritten;
 
-/* Close log file */
-fclose(logFile);
+    if(bytesRead != sizeof(struct FileInfoType))
+        {
+        printf("File information incomplete. Actual bytes %d / expected bytes %ld.\n", bytesRead, sizeof(struct FileInfoType));
+        return -1;
+        }
+    sprintf(connection->fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, ((struct FileInfoType*)buffer)->fileName);
+    connection->fileInfo.sizeInBytes = ((struct FileInfoType*)buffer)->sizeInBytes;
 
-return 0;
-}
+    LOG("Initializing file transfer:\n\tFile name:%s\n\tFile size: %d\n\tExpected chunks:%d\n", connection->fileInfo.fileName, connection->fileInfo.sizeInBytes, connection->fileInfo.sizeInBytes / CHUNK_SIZE);
 
+    /* Send confirmation message to client */
+    bytesWritten = write(connection->socketFD, MESSAGE_RECEIVED_RESP, strlen(MESSAGE_RECEIVED_RESP));
+    if(bytesWritten <= 0)
+        {
+        LOG("Unable to send confirmation message to client.\n");
+        connection->status = STATUS_CLIENT_TRANSFER_FAILED;
+        return -1;
+        }
 
-static int connectionInit(int connectionIdx, int bytesRead, char* buffer)
+    /* The connection was initiated, waiting for file contents */
+    connection->file = fopen(connection->fileInfo.fileName, "w+");
+    connection->status = STATUS_CLIENT_TRANSFER_IN_PROGRESS;
+
+    return 0;
+    }
+
+static int connectionProcess(ConnectionNodeType* connection, int bytesRead, char* buffer)
 {
-char confirmationMessage[128];
-int bytesWritten;
+    int bytesWritten;
 
-if(bytesRead != sizeof(struct FileInfoType))
-    {
-    printf("File information incomplete. Actual bytes %d / expected bytes %ld.\n", bytesRead, sizeof(struct FileInfoType));
-    return -1;
-    }
-sprintf(connections[connectionIdx].fileInfo.fileName, "%s/%s", REMOTE_FILE_DIR, ((struct FileInfoType*)buffer)->fileName);
-connections[connectionIdx].fileInfo.sizeInBytes = ((struct FileInfoType*)buffer)->sizeInBytes;
+    LOG("Received chunk of file. Processing %d bytes.\n", bytesRead);
 
-LOG("Initializing file transfer:\n\tFile name:%s\n\tFile size: %d\n\tExpected chunks:%d\n", connections[connectionIdx].fileInfo.fileName, connections[connectionIdx].fileInfo.sizeInBytes, connections[connectionIdx].fileInfo.sizeInBytes / CHUNK_SIZE);
+    /* Append the incoming bytes to the file */
+    fwrite(buffer, bytesRead, 1, connection->file);
 
-/* Send confirmation message to client */
-memset(confirmationMessage, 0, sizeof(confirmationMessage));
-strcpy(confirmationMessage, MESSAGE_RECEIVED_RESP);
-bytesWritten = write(connections[connectionIdx].socketFD, confirmationMessage, strlen(confirmationMessage));
-if(bytesWritten <= 0)
-    {
-    LOG("Unable to send confirmation message to client: %d.\n", connectionIdx);
-    connections[connectionIdx].status = STATUS_CLIENT_TRANSFER_FAILED;
-    return -1;
-    }
+    connection->receivedBytes += bytesRead;
 
-/* The connection was initiated, waiting for file contents */
-connections[connectionIdx].file = fopen(connections[connectionIdx].fileInfo.fileName, "w+");
-connections[connectionIdx].status = STATUS_CLIENT_TRANSFER_IN_PROGRESS;
+    /* Send confirmation to client */
+    bytesWritten = write(connection->socketFD, MESSAGE_RECEIVED_RESP, strlen(MESSAGE_RECEIVED_RESP));
+    if(bytesWritten <= 0)
+        {
+        LOG("Unable to send confirmation message to client.\n");
+        connection->status = STATUS_CLIENT_TRANSFER_FAILED;
+        return -1;
+        }
 
-return 0;
+    if(connection->receivedBytes >= connection->fileInfo.sizeInBytes)
+        {
+        /* Close the file and the connection - transfer is finished */
+        LOG("Finished transferring file: %s from connection.\n", connection->fileInfo.fileName);
+        connection->status = STATUS_CLIENT_TRANSFER_COMPLETED;
+        connectionStop(connection);
+        fclose(connection->file);
+        }
+
+    return 0;
 }
 
-static int connectionProcess(int connectionIdx, int bytesRead, char* buffer)
-{
-int bytesWritten;
-char confirmationMessage[128];
-
-LOG("Received chunk of file. Processing %d bytes.\n", bytesRead);
-
-/* Append the incoming bytes to the file */
-fwrite(buffer, bytesRead, 1, connections[connectionIdx].file);
-
-connections[connectionIdx].receivedBytes += bytesRead;
-
-/* Send confirmation to client */
-strcpy(confirmationMessage, MESSAGE_RECEIVED_RESP);
-bytesWritten = write(connections[connectionIdx].socketFD, confirmationMessage, strlen(confirmationMessage));
-if(bytesWritten <= 0)
+static int connectionStop(ConnectionNodeType* connection)
     {
-    LOG("Unable to send confirmation message to client: %d.\n", connectionIdx);
-    connections[connectionIdx].status = STATUS_CLIENT_TRANSFER_FAILED;
-    return -1;
+    if(connection->socketFD != 0)
+        {
+        close(connection->socketFD);
     }
+    removeConnectionFromList(&connectionList, connection);
+    deallocateConnection(connection);
 
-if(connections[connectionIdx].receivedBytes >= connections[connectionIdx].fileInfo.sizeInBytes)
-    {
-    /* Close the file and the connection - transfer is finished */
-    LOG("Finished transferring file: %s from connection:%d\n", connections[connectionIdx].fileInfo.fileName, connectionIdx);
-    fclose(connections[connectionIdx].file);
-    memset(&connections[connectionIdx], 0, sizeof(connections[connectionIdx]));
+    return 0;
     }
-
-return 0;
-}

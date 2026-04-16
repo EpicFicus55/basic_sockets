@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -std=c99 -Wall -Wpedantic -O2
+CFLAGS = -std=c99 -Wall -Wpedantic -g
 DEFINES = -D_POSIX_C_SOURCE=200112L
 
 .PHONY: all clean
